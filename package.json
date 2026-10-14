@@ -1,0 +1,23 @@
+{
+  "name": "vue-transformers-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Учебный SPA-демо transformers.js на Vue 3 — демонстрация Composition API, Router, Pinia и Transition-анимаций",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "setup": "node scripts/download-models.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.3.0",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.5"
+  }
+}

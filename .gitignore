@@ -1,0 +1,34 @@
+skills/
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vite
+.vite/
+
+# Локальные модели и wasm (загружаются через `npm run setup`)
+# — НЕ игнорируем public/models и src/wasm, т.к. скрипт скачивает их туда.
+# Но если модели уже скачаны и весят много, раскомментируйте:
+public/models/
+src/wasm/
+
+.tmp/
+.my_readme.md
