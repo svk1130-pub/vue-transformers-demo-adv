@@ -75,8 +75,9 @@ const charCountClass = computed(() => {
   return ''
 })
 
-// === Решение 6: SVG-кольцо ===
-const RING_RADIUS = 18
+// === Решение 6: SVG-кольцо для счётчика символов ===
+// ★ Радиус 20 при SVG 52×52 даёт зазор между текстом и кольцом
+const RING_RADIUS = 20
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
 const ringPercent = computed(() => Math.min(charCount.value / MAX_CHARS, 1))
 const ringDashoffset = computed(() =>
@@ -147,12 +148,31 @@ function clear() {
 }
 
 // --- Swap ---
+// ★ ВАЖНО: меняем направление И переставляем input↔output.
+//   До фикса здесь было две проблемы:
+//   1) manualOverride устанавливался ДО чтения effectiveDirection —
+//      computed сразу возвращал direction.value (равное 'auto'),
+//      поэтому первый клик не менял направление, а второй переключал
+//      на en_ru, в которую скармливался русский текст → мусор с §-токенами.
+//   2) Swap не переставлял input и output — пользователь ожидает, что
+//      после Swap в поле ввода окажется старый перевод, а в output —
+//      новый перевод в обратном направлении.
 function swapDirection() {
+  // ★ Читаем направление ДО установки manualOverride
+  const currentDir = effectiveDirection.value
+  const currentOutput = fullTranslation.value
+
   manualOverride.value = true
-  direction.value = effectiveDirection.value === 'ru_en' ? 'en_ru' : 'ru_en'
-  if (inputText.value.trim()) {
+  direction.value = currentDir === 'ru_en' ? 'en_ru' : 'ru_en'
+
+  // Если есть текущий перевод — переставляем input↔output и переводим обратно
+  if (currentOutput) {
+    inputText.value = currentOutput
+    translatedSentences.value = []
     translate()
   }
+  // Если перевода ещё нет — просто меняем направление,
+  // пользователь сам нажмёт «Перевести»
 }
 
 // --- Разбиение на предложения ---
@@ -311,14 +331,14 @@ watch(pendingText, async (text) => {
           <div class="translator__footer-left">
             <!-- Решение 6: SVG-кольцо -->
             <div class="translator__count-ring">
-              <svg width="44" height="44" viewBox="0 0 44 44">
-                <circle cx="22" cy="22" :r="RING_RADIUS" fill="none" stroke="var(--color-surface-alt)" stroke-width="3" />
+              <svg width="52" height="52" viewBox="0 0 52 52">
+                <circle cx="26" cy="26" :r="RING_RADIUS" fill="none" stroke="var(--color-surface-alt)" stroke-width="3" />
                 <circle
-                  cx="22" cy="22" :r="RING_RADIUS"
+                  cx="26" cy="26" :r="RING_RADIUS"
                   fill="none" :stroke="ringColor" stroke-width="3"
                   :stroke-dasharray="RING_CIRCUMFERENCE"
                   :stroke-dashoffset="ringDashoffset"
-                  transform="rotate(-90 22 22)"
+                  transform="rotate(-90 26 26)"
                   style="transition: stroke-dashoffset 0.3s ease"
                 />
               </svg>
@@ -423,14 +443,19 @@ watch(pendingText, async (text) => {
         </TransitionGroup>
       </section>
     </Transition>
-  </div>
 
-  <!-- Решение 4: Toast через Teleport -->
-  <Teleport to="body">
-    <Transition name="toast">
-      <div v-if="showToast" class="toast">Текст скопирован</div>
-    </Transition>
-  </Teleport>
+    <!-- Решение 4: Toast через Teleport.
+         ★ Teleport рендерит детей в body, но сам элемент остаётся
+         в шаблоне как "виртуальный" корень. Чтобы <Transition> в
+         DemoPage не ругался на multi-root, оборачиваем весь шаблон
+         в один корневой div. Teleport внутри — ОК, он не считается
+         дополнительным корнем, потому что рендерит контент в body. -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="showToast" class="toast">Текст скопирован</div>
+      </Transition>
+    </Teleport>
+  </div>
 </template>
 
 <style scoped>
@@ -457,9 +482,9 @@ watch(pendingText, async (text) => {
 .translator__footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
 .translator__footer-left { display: flex; align-items: center; gap: 12px; }
 
-/* Решение 6: SVG-кольцо */
-.translator__count-ring { position: relative; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
-.translator__count-text { position: absolute; font-size: 10px; font-weight: 600; color: var(--color-text-muted); font-variant-numeric: tabular-nums; text-align: center; line-height: 1.1; }
+/* Решение 6: SVG-кольцо для счётчика символов */
+.translator__count-ring { position: relative; width: 52px; height: 52px; display: inline-flex; align-items: center; justify-content: center; }
+.translator__count-text { position: absolute; font-size: 10px; font-weight: 600; color: var(--color-text-muted); font-variant-numeric: tabular-nums; text-align: center; line-height: 1.1; padding: 3px; }
 .translator__count-text.warn { color: var(--color-warning); }
 .translator__count-text.over { color: var(--color-danger); }
 

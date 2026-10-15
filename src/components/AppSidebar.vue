@@ -1,15 +1,12 @@
 <script setup>
 import { useDemoStore } from '@/stores/demoStore'
 import { useProgressStore } from '@/stores/progress'
-import { useThemeStore } from '@/stores/theme'
 import { storeToRefs } from 'pinia'
 import { techStackShort } from '@/data/techStack'
 
 const demoStore = useDemoStore()
 const progress = useProgressStore()
-const themeStore = useThemeStore()
 const { currentModel } = storeToRefs(demoStore)
-const { icon } = storeToRefs(themeStore)
 
 const navItems = [
   { to: '/', label: 'Хаб', icon: '◆', page: null },
@@ -54,16 +51,6 @@ const navItems = [
       </div>
     </Transition>
 
-    <button
-      class="sidebar__theme-toggle"
-      @click="themeStore.toggle"
-      :title="themeStore.isDark ? 'Светлая тема' : 'Тёмная тема'"
-    >
-      <Transition name="fade" mode="out-in">
-        <span :key="icon">{{ icon }}</span>
-      </Transition>
-    </button>
-
     <div class="sidebar__footer">
       <span>{{ techStackShort.join(' · ') }}</span>
     </div>
@@ -88,8 +75,6 @@ const navItems = [
 .sidebar__model-info { margin-top: auto; padding: 12px; background: var(--color-surface-alt); border-radius: var(--radius-md); }
 .sidebar__model-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-muted); margin-bottom: 4px; }
 .sidebar__model-name { font-size: 12px; word-break: break-all; color: var(--color-text); }
-.sidebar__theme-toggle { display: flex; align-items: center; justify-content: center; padding: 8px; margin: 0 8px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: pointer; font-size: 18px; transition: background-color 0.2s ease, border-color 0.2s ease; }
-.sidebar__theme-toggle:hover { background: var(--color-surface); border-color: var(--color-primary); }
 .sidebar__footer { font-size: 11px; color: var(--color-text-muted); text-align: center; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }

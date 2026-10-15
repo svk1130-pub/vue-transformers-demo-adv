@@ -1,13 +1,13 @@
-# HOWTODO — пошаговое решение всех 12 задач
+# HOWTODO — пошаговое решение всех 15 задач
 
-Этот документ — **для преподавателя**. Здесь расписано решение всех 12 задач
+Этот документ — **для преподавателя**. Здесь расписано решение всех 15 задач
 из `TODO.md` с указанием файлов, изменяемого кода и пояснениями.
 
 > ⚠️ Этот файл не показывать студентам до дедлайна.
 
 Все решения проверены на совместимость с текущей архитектурой проекта.
 Каждая задача — отдельный раздел; можно решать их независимо друг от друга
-(за исключением задач 7 и 11, где создаются новые файлы).
+(за исключением задач 7, 11, 13 и 15, где создаются новые файлы/структуры).
 
 ---
 
@@ -686,12 +686,12 @@ onBeforeUnmount(() => {
 ### Что меняем
 
 - Добавить `ref` `filterQuery` и `computed` `filteredDetections`
-- Поле ввода над списком
+- Поле ввода над списком с кнопкой очистки `[x]` внутри
 - Использовать `filteredDetections` в `<TransitionGroup>`
 
 ### Код
 
-**В `<script setup>` — добавьте:**
+**В `<script setup>` — добавьте (без изменений по сравнению с предыдущей версией):**
 
 ```js
 // Фильтр найденных объектов по классу
@@ -703,38 +703,38 @@ const filteredDetections = computed(() => {
     d.label.toLowerCase().includes(q),
   )
 })
+
+// Очистка фильтра
+function clearFilter() {
+  filterQuery.value = ''
+}
 ```
 
-**В `<template>` — обновите секцию `detector__results`:**
-
-Найдите:
-```html
-<section class="detector__results">
-  <h2 v-if="formattedDetections.length">Найденные объекты</h2>
-  <TransitionGroup name="list" tag="ul" class="detector__list">
-    <li
-      v-for="(d, index) in formattedDetections"
-      :key="d.label + '-' + index"
-      ...
-    >
-      ...
-    </li>
-  </TransitionGroup>
-</section>
-```
+**В `<template>` — обновите секцию `detector__results` с кнопкой очистки:**
 
 Замените на:
 ```html
 <section class="detector__results">
   <h2 v-if="formattedDetections.length">Найденные объекты</h2>
   <Transition name="fade">
-    <input
-      v-if="formattedDetections.length"
-      v-model="filterQuery"
-      type="text"
-      placeholder="Фильтр по классу…"
-      class="detector__filter"
-    />
+    <div v-if="formattedDetections.length" class="detector__filter-wrap">
+      <input
+        v-model="filterQuery"
+        type="text"
+        placeholder="Фильтр по классу…"
+        class="detector__filter"
+      />
+      <!-- Кнопка очистки [x] внутри input -->
+      <Transition name="fade">
+        <button
+          v-if="filterQuery"
+          type="button"
+          class="detector__filter-clear"
+          @click="clearFilter"
+          aria-label="Очистить фильтр"
+        >×</button>
+      </Transition>
+    </div>
   </Transition>
   <TransitionGroup name="list" tag="ul" class="detector__list">
     <li
@@ -754,23 +754,50 @@ const filteredDetections = computed(() => {
 </section>
 ```
 
-**В `<style scoped>` — добавьте:**
+**В `<style scoped>` — добавьте стили с обёрткой и кнопкой:**
 
 ```css
+/* Обёртка фильтра с относительным позиционированием для кнопки [x] */
+.detector__filter-wrap {
+  position: relative;
+  margin-bottom: 12px;
+}
 .detector__filter {
   width: 100%;
-  padding: 8px 14px;
+  padding: 8px 32px 8px 14px;  /* ★ padding-right 32px под кнопку */
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   font-size: 13px;
   background: var(--color-surface);
-  margin-bottom: 12px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .detector__filter:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+/* Кнопка очистки [x] внутри input */
+.detector__filter-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: var(--color-surface-alt);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.detector__filter-clear:hover {
+  background: var(--color-danger);
+  color: #fff;
 }
 .detector__empty {
   font-size: 14px;
@@ -788,6 +815,11 @@ const filteredDetections = computed(() => {
 - **`<TransitionGroup>` с `name="list"`**: классы `.list-move`,
   `.list-leave-active` уже определены в существующих стилях — фильтрация
   автоматически анимируется (move + leave + enter).
+- **Кнопка `[x]` через `<Transition>`**: `v-if="filterQuery"` + `<Transition name="fade">`
+  даёт плавное появление/исчезновение. `position: absolute` внутри обёртки
+  `.detector__filter-wrap` (с `position: relative`) — кнопка не сдвигает layout.
+- **`padding-right: 32px` на input**: место под кнопку, чтобы текст не
+  залезал под неё.
 - **`:key="d.label + '-' + index"`**: при фильтрации один и тот же класс
   может оказаться на новой позиции. Vue определяет перемещение по `key`,
   без него анимация `list-move` не сработает.
@@ -1134,8 +1166,9 @@ function clearHistory() {
 ### Что меняем
 
 - `ref` `threshold` (по умолчанию 0)
+- `computed` `minThreshold` — наименьший confidence в %
 - `computed` `visibleDetections`
-- Слайдер над картинкой
+- Слайдер с динамическим `:min="minThreshold"`, `max="100"`, `step="0.1"`
 - Перерисовка canvas при изменении слайдера
 
 ### Код
@@ -1145,6 +1178,14 @@ function clearHistory() {
 ```js
 // Слайдер порога уверенности
 const threshold = ref(0) // 0–100 (%)
+
+// ★ Динамический min: наименьший confidence среди найденных объектов.
+//   Округляем вниз до 0.1%, чтобы слайдер не показывал 92.567% и т.п.
+const minThreshold = computed(() => {
+  if (detections.value.length === 0) return 0
+  const min = Math.min(...detections.value.map((d) => d.score))
+  return Math.floor(min * 1000) / 10  // → 92.5 (было 0.92567)
+})
 
 // Отфильтрованные детекции (по порогу)
 const visibleDetections = computed(() =>
@@ -1165,13 +1206,21 @@ detections.value.forEach((d, i) => {
 visibleDetections.value.forEach((d, i) => {
 ```
 
-**Добавьте `watch` для перерисовки canvas:**
+**Добавьте `watch` для перерисовки canvas (и для сброса порога при
+новой детекции):**
 
 ```js
 // Перерисовка canvas при изменении порога
 watch(threshold, () => {
   if (canvasEl.value && imageEl.value) {
     nextTick(() => drawBoxes())
+  }
+})
+
+// ★ Сброс порога при новой детекции (если старое значение выше нового min)
+watch(detections, () => {
+  if (threshold.value < minThreshold.value) {
+    threshold.value = minThreshold.value
   }
 })
 ```
@@ -1184,11 +1233,14 @@ watch(threshold, () => {
 <Transition name="fade">
   <div v-if="formattedDetections.length" class="detector__threshold">
     <label class="detector__threshold-label">
-      Порог уверенности: ≥ {{ threshold }}%
+      Порог уверенности: ≥ {{ threshold.toFixed(1) }}%
     </label>
     <input
       v-model.number="threshold"
-      type="range" min="0" max="100" step="5"
+      type="range"
+      :min="minThreshold"
+      max="100"
+      step="0.1"
       class="detector__threshold-slider"
     />
     <span class="detector__threshold-count">
@@ -1217,7 +1269,8 @@ watch(threshold, () => {
     ...
 ```
 
-**В `<style scoped>` — добавьте:**
+**В `<style scoped>` — добавьте (без изменений по сравнению с предыдущей
+версией):**
 
 ```css
 .detector__threshold {
@@ -1251,10 +1304,20 @@ watch(threshold, () => {
 
 ### Пояснение
 
+- **`computed` `minThreshold`**: возвращает наименьший confidence в %
+  с округлением вниз до 0.1. Это даёт корректный `min` для range-input:
+  если все боксы имеют уверенность ≥ 92.5%, слайдер не позволит
+  поставить порог ниже этого значения (иначе все боксы скрылись бы).
+- **`Math.floor(min * 1000) / 10`**: умножаем на 1000, округляем вниз,
+  делим на 10. `0.92567` → `925.67` → `925` → `92.5`.
 - **`v-model.number`**: модификатор `.number` автоматически конвертирует
   значение в `number` (по умолчанию range возвращает строку).
-- **`watch` на `threshold` → `drawBoxes`**: при изменении слайдера canvas
-  перерисовывается. `nextTick` нужен, чтобы DOM обновился до отрисовки.
+- **`watch(detections)` для сброса**: если старый порог оказался ниже
+  нового `min` (после новой детекции с более высоким min confidence),
+  поднимаем порог до min. Иначе слайдер «залипнет» на значении ниже min
+  и не даст его двигать.
+- **`threshold.toFixed(1)` в подписи**: показываем порог с одним знаком
+  после запятой (92.5%, а не 92.567890123%).
 - **`computed` `visibleDetections`**: один источник правды — используется
   и в canvas, и в списке, и в счётчике. Меняем порог → обновляются все 3
   места одновременно (это и есть реактивность).
@@ -1654,14 +1717,15 @@ const { icon } = storeToRefs(themeStore)
 
 ---
 
-## 12. Слайдер сравнения «до/после»
+## 12. Слайдер-шторка сравнения «до/после»
 
 **Файл:** `src/components/panels/DetectorPanel.vue`
 
 ### Что меняем
 
-- `ref` `sliderPosition` (по умолчанию 50)
+- `ref` `sliderPosition` (по умолчанию 100)
 - Динамический `clip-path` на canvas-overlay
+- Вертикальная черта-граница (отдельный `<div>` поверх картинки)
 - Слайдер над картинкой
 
 ### Код
@@ -1669,19 +1733,20 @@ const { icon } = storeToRefs(themeStore)
 **В `<script setup>` — добавьте:**
 
 ```js
-// Слайдер «до/после»
-const sliderPosition = ref(50) // 0–100 (% показа overlay)
+// Слайдер-шторка «до/после».
+// 100 = все боксы видны, 0 = боксов не видно.
+const sliderPosition = ref(100)
 ```
 
 **В `<template>` — добавьте слайдер над картинкой (после блока threshold,
 если делали задачу 8; иначе перед `.detector__canvas-wrap`):**
 
 ```html
-<!-- Слайдер «до/после» -->
+<!-- Слайдер-шторка «до/после» -->
 <Transition name="fade">
   <div v-if="detections.length" class="detector__compare">
     <label class="detector__compare-label">
-      Сравнение: {{ sliderPosition }}% показа боксов
+      Шторка сравнения: {{ sliderPosition }}% показа боксов
     </label>
     <input
       v-model.number="sliderPosition"
@@ -1692,29 +1757,54 @@ const sliderPosition = ref(50) // 0–100 (% показа overlay)
 </Transition>
 ```
 
-**В `<template>` — обновите canvas-overlay, добавьте динамический
-`clip-path`:**
+**В `<template>` — обновите блок `.detector__canvas-inner`, добавьте
+через canvas-overlay с `clip-path` и вертикальную черту:**
 
 Найдите:
 ```html
-<Transition name="fade">
-  <canvas v-if="detections.length" ref="canvasEl" class="detector__overlay"></canvas>
-</Transition>
+<div class="detector__canvas-inner">
+  <img v-show="!imageLoading" ... />
+  <Transition name="fade">
+    <canvas v-if="detections.length" ref="canvasEl" class="detector__overlay"></canvas>
+  </Transition>
+</div>
 ```
 
-Замените на:
+Замените на (с чертой-границей):
 ```html
-<Transition name="fade">
-  <canvas
-    v-if="detections.length"
-    ref="canvasEl"
-    class="detector__overlay"
-    :style="{ 'clip-path': `inset(0 ${100 - sliderPosition}% 0 0)` }"
-  ></canvas>
-</Transition>
+<div class="detector__canvas-inner">
+  <img
+    v-show="!imageLoading"
+    ref="imageEl"
+    :src="imageUrl"
+    alt="Загруженное изображение"
+    class="detector__img"
+    @load="onImageLoad"
+    @error="onImageError"
+  />
+  <!-- Canvas-overlay: обрезается справа через clip-path, чтобы сделать
+       «шторку»: слева видны боксы, справа — нет -->
+  <Transition name="fade">
+    <canvas
+      v-if="detections.length"
+      ref="canvasEl"
+      class="detector__overlay"
+      :style="{ 'clip-path': `inset(0 ${100 - sliderPosition}% 0 0)` }"
+    ></canvas>
+  </Transition>
+  <!-- ★ Вертикальная черта-граница — видна всегда, двигается вместе
+       со слайдером. Показывает, где проходит граница «до/после». -->
+  <Transition name="fade">
+    <div
+      v-if="detections.length"
+      class="detector__compare-line"
+      :style="{ left: sliderPosition + '%' }"
+    ></div>
+  </Transition>
+</div>
 ```
 
-**В `<style scoped>` — добавьте:**
+**В `<style scoped>` — добавьте стили слайдера и черты:**
 
 ```css
 .detector__compare {
@@ -1738,6 +1828,20 @@ const sliderPosition = ref(50) // 0–100 (% показа overlay)
   accent-color: var(--color-primary);
   cursor: pointer;
 }
+
+/* ★ Вертикальная черта-граница */
+.detector__compare-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+  transition: left 0.1s ease;
+}
 ```
 
 ### Пояснение
@@ -1747,12 +1851,541 @@ const sliderPosition = ref(50) // 0–100 (% показа overlay)
   Меняя значение, мы «открываем»/«закрываем» canvas-overlay.
 - **Динамический `:style`**: Vue корректно работает с `style` как объектом.
   `` `inset(0 ${100 - sliderPosition}% 0 0)` `` — template string в JS.
-- **Без анимации по умолчанию**: `clip-path` через `:style` не анимируется
-  автоматически (нужно `transition: clip-path 0.1s` в CSS, если хотите
-  плавность). Для slider это не нужно — он и так реагирует мгновенно.
-- **`sliderPosition = 100`** → видны все боксы (overlay не обрезан).
-  **`sliderPosition = 0`** → боксов не видно (overlay полностью обрезан).
-  Логика обратная: `100 - sliderPosition` даёт % обрезки справа.
+- **Черта-граница через отдельный `<div>`**: не canvas-элемент, а обычный
+  `<div>` поверх картинки с `position: absolute` и `left: sliderPosition + '%'`.
+  `transform: translateX(-50%)` центрирует её относительно этой координаты
+  (иначе черта будет слева от позиции, а не по центру).
+- **`transition: left 0.1s ease` на черте**: чтобы при перетаскивании слайдера
+  черта двигалась плавно, а не дёргалась. Canvas `clip-path` анимировать
+  не нужно — он обновляется мгновенно.
+- **`pointer-events: none`**: черта не должна перехватывать клики по canvas.
+  Если добавить `@click` на canvas (задача 13), черта не должна мешать.
+- **`z-index: 2`**: черта должна быть поверх canvas-overlay (z-index: 1
+  по умолчанию для absolute-элементов) и под UI-кнопками.
+- **`sliderPosition = 100`** → видны все боксы (overlay не обрезан), черта
+  у правого края. **`sliderPosition = 0`** → боксов не видно (overlay
+  полностью обрезан), черта у левого края. Логика обратная:
+  `100 - sliderPosition` даёт % обрезки справа.
+
+---
+
+## 13. Управление видимостью боксов + color picker
+
+**Файл:** `src/components/panels/DetectorPanel.vue`
+
+### Что меняем
+
+- `ref`-массив `boxVisibility` (один флаг на детект)
+- `ref(new Map())` для `customColors`
+- Чекбокс у каждого элемента списка + кнопки «Показать все» / «Скрыть все»
+- Клик по canvas скрывает соответствующий бокс
+- Shift+клик по чекбоксу открывает color picker
+- Скрытые строки списка с opacity 0.4 и зачёркиванием
+- `drawBoxes()` использует `customColors` и фильтрует по `boxVisibility`
+
+### Код
+
+**В `<script setup>` — добавьте:**
+
+```js
+// === Управление видимостью боксов ===
+// boxVisibility[i] = true/false — видимость i-го бокса
+const boxVisibility = ref([])
+
+// customColors: Map<label, color> — кастомные цвета по классам
+const customColors = ref(new Map())
+
+// Синхронизация: при новых детекциях все боксы видны, кастомные цвета сбрасываются
+watch(detections, (dets) => {
+  boxVisibility.value = dets.map(() => true)
+  customColors.value = new Map()
+})
+
+// computed: только видимые детекции (для отрисовки и счётчиков)
+const visibleDetectionsForDraw = computed(() =>
+  formattedDetections.value.filter((d, i) => boxVisibility.value[i] !== false),
+)
+
+// Цвет бокса: кастомный или дефолтный по индексу
+function getColorForDetection(d, i) {
+  return customColors.value.get(d.label) || BOX_COLORS[i % BOX_COLORS.length]
+}
+
+// Перерисовка canvas при изменении видимости или цветов
+watch([boxVisibility, customColors], () => {
+  if (canvasEl.value && imageEl.value) {
+    nextTick(() => drawBoxes())
+  }
+}, { deep: true })
+
+// Кнопки «Показать все» / «Скрыть все»
+function showAllBoxes() {
+  boxVisibility.value = detections.value.map(() => true)
+}
+
+function hideAllBoxes() {
+  boxVisibility.value = detections.value.map(() => false)
+}
+
+// === Клик по canvas скрывает бокс ===
+// Скрытый ref на скрытый <input type="color"> — открывается программно
+const colorInputEl = ref(null)
+let colorPickerTarget = ref(null)  // label, для которого открывают picker
+
+function onCanvasClick(e) {
+  if (!canvasEl.value || detections.value.length === 0) return
+  const rect = canvasEl.value.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvasEl.value.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvasEl.value.height / rect.height)
+
+  // Найти бокс, в который попал клик (по первому совпадению)
+  for (let i = 0; i < detections.value.length; i++) {
+    const { xmin, ymin, xmax, ymax } = detections.value[i].box
+    if (x >= xmin && x <= xmax && y >= ymin && y <= ymax) {
+      boxVisibility.value[i] = false
+      return
+    }
+  }
+}
+
+// === Shift+клик по чекбоксу открывает color picker ===
+function onCheckboxClick(e, label) {
+  if (e.shiftKey) {
+    e.preventDefault()
+    colorPickerTarget.value = label
+    colorInputEl.value?.click()
+  }
+}
+
+function onColorPicked(e) {
+  if (colorPickerTarget.value) {
+    customColors.value.set(colorPickerTarget.value, e.target.value)
+    // Триггерим реактивность: Map не реактивна по умолчанию, нужно
+    // создать новый Map с теми же значениями
+    customColors.value = new Map(customColors.value)
+  }
+}
+```
+
+**В `onMounted` — добавьте слушатель клика на canvas:**
+
+```js
+onMounted(async () => {
+  // ...существующий код...
+  // ★ Слушатель клика по canvas для скрытия боксов
+  if (canvasEl.value) {
+    canvasEl.value.addEventListener('click', onCanvasClick)
+  }
+})
+```
+
+**В `onBeforeUnmount` — не забудьте убрать слушатель:**
+
+```js
+onBeforeUnmount(() => {
+  // ...существующий код...
+  if (canvasEl.value) {
+    canvasEl.value.removeEventListener('click', onCanvasClick)
+  }
+})
+```
+
+**Измените `drawBoxes()` — используйте `visibleDetectionsForDraw` и
+`getColorForDetection`:**
+
+Найдите в `drawBoxes()`:
+```js
+visibleByThreshold.value.forEach((d, i) => {
+  const color = d.color
+  // ...
+})
+```
+
+Замените на:
+```js
+// ★ Только видимые боксы, прошедшие порог, с учётом кастомных цветов
+const drawList = visibleByThreshold.value.filter((d, i) => {
+  const realIndex = formattedDetections.value.indexOf(d)
+  return boxVisibility.value[realIndex] !== false
+})
+drawList.forEach((d) => {
+  const realIndex = formattedDetections.value.indexOf(d)
+  const color = getColorForDetection(d, realIndex)
+  // ...остальной код рисования бокса с этим color...
+})
+```
+
+**В `<template>` — обновите секцию `detector__results`:**
+
+```html
+<section class="detector__results">
+  <h2 v-if="formattedDetections.length">Найденные объекты</h2>
+
+  <!-- Кнопки «Показать все» / «Скрыть все» -->
+  <Transition name="fade">
+    <div v-if="formattedDetections.length" class="detector__visibility-actions">
+      <button class="detector__btn detector__btn--ghost detector__btn--sm" @click="showAllBoxes">
+        Показать все
+      </button>
+      <button class="detector__btn detector__btn--ghost detector__btn--sm" @click="hideAllBoxes">
+        Скрыть все
+      </button>
+    </div>
+  </Transition>
+
+  <!-- Фильтр (из задачи 5) -->
+  <Transition name="fade">
+    <div v-if="formattedDetections.length" class="detector__filter-wrap">
+      <input v-model="filterQuery" type="text" placeholder="Фильтр по классу…" class="detector__filter" />
+      <Transition name="fade">
+        <button v-if="filterQuery" class="detector__filter-clear" @click="clearFilter">×</button>
+      </Transition>
+    </div>
+  </Transition>
+
+  <!-- Скрытый color picker, открывается программно -->
+  <input
+    ref="colorInputEl"
+    type="color"
+    style="position: absolute; opacity: 0; pointer-events: none"
+    @input="onColorPicked"
+  />
+
+  <TransitionGroup name="list" tag="ul" class="detector__list">
+    <li
+      v-for="(d, index) in visibleDetections"
+      :key="d.label + '-' + index"
+      class="detector__item"
+      :class="{ hidden: boxVisibility[index] === false }"
+      :style="{ '--color': getColorForDetection(d, index), '--i': index }"
+    >
+      <input
+        type="checkbox"
+        v-model="boxVisibility[index]"
+        class="detector__item-checkbox"
+        @click="onCheckboxClick($event, d.label)"
+        title="Shift+клик — сменить цвет"
+      />
+      <span class="detector__item-dot"></span>
+      <span class="detector__item-label">{{ d.label }}</span>
+      <span class="detector__item-score">{{ d.scorePct }}%</span>
+    </li>
+  </TransitionGroup>
+  <!-- ...существующий блок «Ничего не найдено»... -->
+</section>
+```
+
+**В `<style scoped>` — добавьте стили чекбокса и скрытых строк:**
+
+```css
+/* Кнопки «Показать все» / «Скрыть все» */
+.detector__visibility-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.detector__btn--sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Чекбокс в элементе списка */
+.detector__item-checkbox {
+  margin: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+/* Скрытые строки: полупрозрачные с зачёркиванием */
+.detector__item.hidden {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.detector__item.hidden .detector__item-dot {
+  opacity: 0.5;
+}
+```
+
+### Пояснение
+
+- **`boxVisibility`-массив**: один булевый флаг на каждый детект. Меняем через
+  `v-model` на чекбоксе — Vue обновит массив и trigger-нет `watch` с `deep: true`.
+- **`watch` с `{ deep: true }`**: обязательно для массива/объекта, иначе
+  изменение одного элемента через `v-model="boxVisibility[index]"` не
+  trigger-нет watch (потому что ссылка на массив не меняется).
+- **`customColors.value = new Map(customColors.value)`**: Map не реактивна
+  по умолчанию в Vue 3. Чтобы trigger-нуть обновление, создаём новый Map
+  с теми же парами. Vue видит новый объект — обновляет dependents.
+- **Клик по canvas**: `canvasEl.addEventListener('click', ...)`. Координаты
+  клика масштабируются (`canvas.width / rect.width`), потому что canvas
+  отображается не в натуральном размере (его ширина/высота в CSS отличается
+  от внутреннего размера).
+- **Shift+клик по чекбоксу**: `e.shiftKey` — проверка модификатора. Чтобы
+  открыть нативный color picker программно, вызываем `.click()` на скрытом
+  `<input type="color">`. Браузер сам откроет системное окно выбора цвета.
+- **`e.preventDefault()` при Shift+клике**: чтобы чекбокс не переключился,
+  только открылся picker.
+- **`onBeforeUnmount` для слушателя**: критично убрать `addEventListener`,
+  иначе при размонтировании компонента ссылка на `onCanvasClick` останется
+  в canvas, а функция будет удалена → memory leak.
+
+---
+
+## 14. Переключатель темы в шапке main
+
+**Файлы:** `src/App.vue`, `src/components/AppSidebar.vue`
+
+### Что меняем
+
+- В `App.vue` добавить кнопку темы в правый верхний угол `main`
+- В `AppSidebar.vue` удалить кнопку темы и связанный код
+
+### Код
+
+**В `src/App.vue` — обновите `<script setup>` и `<template>`:**
+
+```vue
+<script setup>
+import { onMounted } from 'vue'
+import { useThemeStore } from '@/stores/theme'
+import { storeToRefs } from 'pinia'
+import AppSidebar from './components/AppSidebar.vue'
+
+const themeStore = useThemeStore()
+const { icon } = storeToRefs(themeStore)
+
+onMounted(() => {
+  themeStore.apply()
+})
+</script>
+
+<template>
+  <div class="app-shell">
+    <Transition name="slide" appear>
+      <AppSidebar />
+    </Transition>
+
+    <main class="app-main">
+      <!-- ★ Кнопка темы в правом верхнем углу main -->
+      <button
+        class="theme-toggle"
+        @click="themeStore.toggle"
+        :title="themeStore.isDark ? 'Светлая тема' : 'Тёмная тема'"
+      >
+        <Transition name="fade" mode="out-in">
+          <span :key="icon">{{ icon }}</span>
+        </Transition>
+      </button>
+
+      <RouterView v-slot="{ Component, route }">
+        <Transition name="fade" mode="out-in">
+          <component :is="Component" :key="route.path" />
+        </Transition>
+      </RouterView>
+    </main>
+  </div>
+</template>
+
+<style scoped>
+.app-shell { display: flex; min-height: 100vh; }
+.app-main {
+  flex: 1;
+  min-width: 0;
+  padding: 32px 40px 64px;
+  max-width: var(--content-max);
+  position: relative; /* ★ для position: sticky внутри */
+}
+
+/* ★ Кнопка темы в правом верхнем углу main, sticky сверху */
+.theme-toggle {
+  position: sticky;
+  top: 16px;
+  margin-left: auto;
+  margin-bottom: 16px;
+  z-index: 10;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 18px;
+  box-shadow: var(--shadow-sm);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.theme-toggle:hover {
+  background: var(--color-surface-alt);
+  border-color: var(--color-primary);
+}
+
+.slide-enter-active, .slide-leave-active { transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.4s ease; }
+.slide-enter-from { transform: translateX(-100%); opacity: 0; }
+.slide-leave-to { transform: translateX(-100%); opacity: 0; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.25s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>
+```
+
+**В `src/components/AppSidebar.vue` — удалите кнопку темы и связанный код:**
+
+В `<script setup>` удалите импорт `useThemeStore` и `icon`:
+```js
+// Удалить эти строки:
+import { useThemeStore } from '@/stores/theme'
+// ...
+const themeStore = useThemeStore()
+const { icon } = storeToRefs(themeStore)
+```
+
+В `<template>` удалите кнопку:
+```html
+<!-- Удалить этот блок: -->
+<button class="sidebar__theme-toggle" @click="themeStore.toggle" :title="...">
+  <Transition name="fade" mode="out-in">
+    <span :key="icon">{{ icon }}</span>
+  </Transition>
+</button>
+```
+
+В `<style scoped>` удалите `.sidebar__theme-toggle` стили.
+
+### Пояснение
+
+- **`position: sticky; top: 16px;`**: элемент остаётся на месте при скролле,
+  пока родитель (`.app-main`) виден в viewport. Когда пользователь скроллит
+  вниз, кнопка «прилипает» к верху и остаётся видимой.
+- **`margin-left: auto`**: прижимает кнопку вправо внутри flex/grid-родителя.
+  `main` — это flex-ребёнок `.app-shell`, внутри main элементы по умолчанию
+  идут блочно. `margin-left: auto` работает, если родитель — flex. Если нет,
+  используйте `position: absolute; right: 16px; top: 16px;` вместо sticky.
+- **`storeToRefs` для `icon`**: геттер Pinia нужно «распаковать» через
+  `storeToRefs`, иначе он не будет реактивным в шаблоне.
+- **`<Transition mode="out-in">` на иконке**: при смене 🌙 → ☀️ старая иконка
+  fade-out, новая fade-in. Без `mode="out-in"` они бы наложились.
+- **`box-shadow: var(--shadow-sm)`**: чтобы кнопка была визуально отделена
+  от контента, особенно над сложным фоном.
+
+---
+
+## 15. Блок «Найденные объекты» справа от фотографии
+
+**Файл:** `src/components/panels/DetectorPanel.vue`
+
+### Что меняем
+
+- Обернуть `.detector__canvas-wrap` и `.detector__results` в
+  `<div class="detector__layout">` с CSS Grid
+- На широких экранах — две колонки (картинка + список)
+- На узких (<900px) — одна колонка, список под картинкой
+- Уменьшить pills (padding, font-size, dot size)
+
+### Код
+
+**В `<template>` — оберните два блока в обёртку:**
+
+Найдите:
+```html
+<Transition name="fade">
+  <div v-if="imageUrl" class="detector__canvas-wrap">
+    <!-- ...степпер, метрики, слайдеры, картинка... -->
+  </div>
+</Transition>
+
+<!-- ...блок threshold, compare (если есть)... -->
+
+<section class="detector__results">
+  <!-- ...список найденных объектов... -->
+</section>
+```
+
+Замените на:
+```html
+<!-- ★ Двухколоночный layout: картинка слева, список справа.
+     На узких экранах — одна колонка, список под картинкой. -->
+<div class="detector__layout">
+  <div class="detector__layout-left">
+    <!-- Метрики, слайдеры, степпер, картинка — слева -->
+    <Transition name="fade">
+      <div v-if="imageUrl" class="detector__canvas-wrap">
+        <!-- ...существующий контент... -->
+      </div>
+    </Transition>
+  </div>
+
+  <div class="detector__layout-right">
+    <!-- Блок «Найденные объекты» — справа -->
+    <section v-if="formattedDetections.length" class="detector__results">
+      <!-- ...существующий контент блока results... -->
+    </section>
+  </div>
+</div>
+```
+
+**В `<style scoped>` — добавьте grid-стили и уменьшите pills:**
+
+```css
+/* ★ Двухколоночный layout */
+.detector__layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;  /* картинка занимает 1fr, список 280px */
+  gap: 20px;
+  align-items: start;  /* важно: колонки не растягиваются по высоте */
+}
+@media (max-width: 900px) {
+  .detector__layout {
+    grid-template-columns: 1fr;  /* узкий экран — одна колонка */
+  }
+}
+.detector__layout-left {
+  min-width: 0;  /* критично для grid-элементов с длинным контентом */
+}
+.detector__layout-right {
+  min-width: 0;
+}
+
+/* ★ Уменьшенные pills */
+.detector__item {
+  padding: 6px 10px;  /* было 10px 14px */
+  gap: 6px;            /* было 10px */
+}
+.detector__item-dot {
+  width: 8px;          /* было 12px */
+  height: 8px;
+}
+.detector__item-label {
+  font-size: 12px;     /* было 14px */
+}
+.detector__item-score {
+  font-size: 11px;     /* было 13px */
+}
+.detector__item-checkbox {
+  width: 14px;         /* чекбокс тоже меньше */
+  height: 14px;
+}
+```
+
+### Пояснение
+
+- **CSS Grid `1fr 280px`**: `1fr` — занимает всё доступное место, `280px` —
+  фиксированная ширина правой колонки. Получаем layout «картинка + боковая
+  панель», как в Notion/Linear.
+- **`align-items: start`**: критично для grid. Без этого обе колонки
+  растягиваются до высоты самой длинной, и правая колонка будет иметь пустое
+  пространство под списком, если он короче картинки.
+- **`min-width: 0`**: grid-элементы по умолчанию не ужимаются меньше контента.
+  Это критично, потому что `.detector__canvas-inner` имеет длинный контент
+  (картинку). Без `min-width: 0` левая колонка «выдавит» правую за пределы
+  grid.
+- **`@media (max-width: 900px)`**: media query для адаптивности. На узких
+  экранах (<900px) колонка одна, блок уходит под картинку.
+- **`v-if="formattedDetections.length"` на правой колонке**: если детекций
+  нет, вся правая колонка скрыта — layout автоматически становится
+  одноколоночным без пустого места справа.
+- **Уменьшенные pills**: компактнее выглядят в узкой правой колонке.
+  `padding: 6px 10px` + `font-size: 12px` экономят место, не теряя читаемость.
 
 ---
 
@@ -1760,12 +2393,12 @@ const sliderPosition = ref(50) // 0–100 (% показа overlay)
 
 | Файл | Задачи | Что меняем |
 |------|-------|------------|
-| `src/components/panels/DetectorPanel.vue` | 1, 2, 5, 8, 10, 12 | Большая часть работы |
+| `src/components/panels/DetectorPanel.vue` | 1, 2, 5, 8, 10, 12, 13, 15 | Большая часть работы |
 | `src/components/panels/TranslatorPanel.vue` | 3, 4, 6, 7, 9 | Большая часть работы |
 | `src/stores/history.js` (новый) | 7 | Создать |
 | `src/stores/theme.js` (новый) | 11 | Создать |
-| `src/components/AppSidebar.vue` | 11 | Кнопка темы |
-| `src/App.vue` | 11 | `themeStore.apply()` в `onMounted` |
+| `src/components/AppSidebar.vue` | 11, 14 | Кнопка темы (11) → удалить (14) |
+| `src/App.vue` | 11, 14 | `themeStore.apply()` (11) + кнопка в шапке (14) |
 
 ## Порядок внедрения (рекомендация)
 
@@ -1774,14 +2407,20 @@ const sliderPosition = ref(50) // 0–100 (% показа overlay)
 1. **Сначала задачи 1, 2** (степпер + метрики в DetectorPanel)
 2. **Задачи 3, 4** (Очистить + Копировать в TranslatorPanel)
 3. **Задача 7** (история — отдельный стор, не конфликтует)
-4. **Задача 11** (тема — отдельный стор, не конфликтует)
-5. **Задачи 5, 8** (фильтр + threshold — обе в DetectorPanel)
+4. **Задача 11** (тема — отдельный стор + кнопка в сайдбаре)
+5. **Задачи 5, 8** (фильтр с кнопкой [x] + threshold с динамическим min)
 6. **Задачи 6, 9** (кольцо + озвучка — обе в TranslatorPanel)
-7. **Задачи 10, 12** (DnD + слайдер «до/после» — обе в DetectorPanel)
+7. **Задачи 10, 12** (DnD + слайдер-шторка с чертой — обе в DetectorPanel)
+8. **Задача 13** (видимость боксов + color picker — после всех остальных
+   в DetectorPanel, потому что меняет `drawBoxes` и список)
+9. **Задача 14** (тема в шапке — после задачи 11, потому что удаляет кнопку
+   из сайдбара)
+10. **Задача 15** (блок справа — последняя, потому что меняет layout всего
+    DetectorPanel)
 
 ## После внедрения
 
-Запустите `npm run dev` и проверьте все 12 задач по чеклистам из `TODO.md`.
+Запустите `npm run dev` и проверьте все 15 задач по чеклистам из `TODO.md`.
 Если что-то не работает — откройте DevTools Console, посмотрите ошибки.
 Все новые `computed`/`watch`/`ref` должны быть в `<script setup>` **до**
 использования в шаблоне.

@@ -1,17 +1,20 @@
 <script setup>
 /**
  * DetectorPanel.vue — демо-логика детектора объектов.
- * Содержит ВСЕ 12 решений из HOWTODO.md (где относятся к детектору):
- *   1. 3-стадийный степпер загрузки
- *   2. Метрики объектов над картинкой
- *   5. Фильтр найденных объектов по классу
- *   8. Слайдер порога уверенности
+ * Содержит ВСЕ 15 решений из HOWTODO.md (где относятся к детектору):
+ *   1.  3-стадийный степпер загрузки
+ *   2.  Метрики объектов над картинкой
+ *   5.  Фильтр найденных объектов по классу + кнопка [x]
+ *   8.  Слайдер порога уверенности с динамическим min
  *   10. Drag-and-drop перестановка объектов
- *   12. Слайдер сравнения «до/после»
+ *   12. Слайдер-шторка «до/после» с вертикальной чертой
+ *   13. Управление видимостью боксов + color picker
+ *   15. Двухколоночный layout — список справа от фото
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import { usePipeline } from '@/composables/usePipeline'
 import { useDemoStore } from '@/stores/demoStore'
+import { findClassByEn, COCO_CLASSES } from '@/content/coco'
 import ModelStatus from '@/components/ModelStatus.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import ErrorBanner from '@/components/ErrorBanner.vue'
@@ -65,9 +68,19 @@ watch(stage, (s) => {
 })
 onBeforeUnmount(() => clearTimeout(doneTimer))
 
-const showStepper = computed(() =>
-  stage.value !== 'idle' || showDoneStage.value,
-)
+// ★ Степпер показываем во время loading/detecting/done,
+//   И когда inference завершился без находок (фикс 6) — чтобы пользователь
+//   видел, что обработка завершилась. Степпер НЕ показываем, пока inference
+//   ещё не запускался (есть картинка, но модель только что загрузилась).
+const showStepper = computed(() => {
+  if (stage.value === 'loading' || stage.value === 'detecting') return true
+  if (showDoneStage.value) return true
+  // ★ Inference завершился (с находками или без) — показываем "Готово"
+  if (hasFinishedInference.value && imageUrl.value && !imageLoading.value && !inferencing.value) {
+    return true
+  }
+  return false
+})
 
 const steps = [
   { key: 'loading', label: 'Загрузка изображения' },
@@ -79,16 +92,31 @@ const stageLabel = computed(() => {
   switch (stage.value) {
     case 'loading': return 'Загрузка изображения…'
     case 'detecting': return 'Идёт детекция…'
-    case 'done': return `Готово — найдено ${detections.value.length} объектов`
+    case 'done': return detections.value.length > 0
+      ? `Готово — найдено ${detections.value.length} объектов`
+      : 'Готово — ничего не найдено'
+    case 'idle':
+      // ★ Inference завершился, но ничего не найдено
+      if (hasFinishedInference.value && imageUrl.value && !imageLoading.value && !inferencing.value) {
+        return 'Готово — ничего не найдено'
+      }
+      return ''
     default: return ''
   }
 })
 
 const stageOrder = ['idle', 'loading', 'detecting', 'done']
 function isStepDone(stepKey) {
+  // ★ Если inference завершился (с находками или без) — все шаги пройдены
+  if (hasFinishedInference.value && !imageLoading.value && !inferencing.value) {
+    return stepKey === 'loading' || stepKey === 'detecting'
+  }
   return stageOrder.indexOf(stage.value) > stageOrder.indexOf(stepKey)
 }
 function isStepPending(stepKey) {
+  if (hasFinishedInference.value && !imageLoading.value && !inferencing.value) {
+    return false  // все шаги пройдены
+  }
   return stageOrder.indexOf(stage.value) < stageOrder.indexOf(stepKey)
 }
 
@@ -106,16 +134,24 @@ const averageConfidence = computed(() => {
 // === Решение 8: слайдер порога ===
 const threshold = ref(0)
 
-// === Решение 12: слайдер «до/после» ===
+// ★ Динамический min для слайдера порога: наименьший confidence в %
+const minThreshold = computed(() => {
+  if (detections.value.length === 0) return 0
+  const min = Math.min(...detections.value.map((d) => d.score))
+  return Math.floor(min * 1000) / 10
+})
+
+// === Решение 12: слайдер-шторка «до/после» ===
 const sliderPosition = ref(100)
 
 // === Решение 5: фильтр найденных объектов ===
 const filterQuery = ref('')
 
-// Форматирование
+// Форматирование — с оригинальным индексом для boxVisibility
 const formattedDetections = computed(() =>
   detections.value.map((d, i) => ({
     ...d,
+    _origIndex: i,  // ★ для boxVisibility и getColorForDetection при сортировке
     scorePct: (d.score * 100).toFixed(1),
     color: BOX_COLORS[i % BOX_COLORS.length],
   })),
@@ -127,19 +163,134 @@ const visibleByThreshold = computed(() =>
 )
 
 // Решение 5: отфильтрованные по запросу (внутри видимых по порогу)
+function clearFilter() {
+  filterQuery.value = ''
+}
+
+// === Сортировка найденных объектов ===
+// 'confidence-desc' | 'confidence-asc' | 'label-asc' | 'label-desc'
+const sortMode = ref('confidence-desc')
+
+const sortOptions = [
+  { value: 'confidence-desc', label: '% уверенности ↓' },
+  { value: 'confidence-asc',  label: '% уверенности ↑' },
+  { value: 'label-asc',        label: 'Класс А→Я' },
+  { value: 'label-desc',       label: 'Класс Я→А' },
+]
+
+function sortDetections(list) {
+  const sorted = [...list]
+  switch (sortMode.value) {
+    case 'confidence-desc':
+      return sorted.sort((a, b) => b.score - a.score)
+    case 'confidence-asc':
+      return sorted.sort((a, b) => a.score - b.score)
+    case 'label-asc':
+      // ★ Сортируем по отображаемому имени (RU при русском, EN при английском)
+      return sorted.sort((a, b) => getDisplayName(a).localeCompare(getDisplayName(b)))
+    case 'label-desc':
+      return sorted.sort((a, b) => getDisplayName(b).localeCompare(getDisplayName(a)))
+    default:
+      return sorted
+  }
+}
+
+// ★ Поиск по английскому И русскому имени класса (фикс 5)
+function matchesQuery(d, q) {
+  if (d.label.toLowerCase().includes(q)) return true
+  const cocoClass = findClassByEn(d.label)
+  if (cocoClass && cocoClass.ru.toLowerCase().includes(q)) return true
+  return false
+}
+
 const visibleDetections = computed(() => {
   const q = filterQuery.value.trim().toLowerCase()
-  if (!q) return visibleByThreshold.value
-  return visibleByThreshold.value.filter((d) =>
-    d.label.toLowerCase().includes(q),
-  )
+  const base = q
+    ? visibleByThreshold.value.filter((d) => matchesQuery(d, q))
+    : visibleByThreshold.value
+  return sortDetections(base)
 })
+
+// ★ Сброс фильтра при новой детекции (фикс 5)
+watch(detections, () => {
+  filterQuery.value = ''
+})
+
+// === Решение 16: переключатель языка + перевод классов + озвучка ===
+// 'en' — оригинальные COCO-имена, 'ru' — переводы из coco.js
+const displayLanguage = ref('en')
+
+// Получить имя класса на выбранном языке
+function getDisplayName(d) {
+  if (displayLanguage.value === 'ru') {
+    const cocoClass = findClassByEn(d.label)
+    return cocoClass ? cocoClass.ru : d.label  // fallback на английский
+  }
+  return d.label
+}
+
+// Озвучка найденного объекта
+const speechSupported = 'speechSynthesis' in window
+const speakingIndex = ref(null)
+let currentUtterance = null
+
+function speakDetection(d, index) {
+  if (!speechSupported) return
+  // Если уже озвучивается этот же элемент — останавливаем
+  if (speakingIndex.value === index) {
+    speechSynthesis.cancel()
+    speakingIndex.value = null
+    return
+  }
+  // Останавливаем предыдущую озвучку
+  speechSynthesis.cancel()
+
+  const score = (d.score * 100).toFixed(1)
+  const name = getDisplayName(d)
+
+  // ★ Фраза зависит от языка:
+  //   EN: "With 99.5% probability, it's a cat."
+  //   RU: "С вероятностью 99.5 процентов это кот"
+  // ★ На RU используем "процентов" (не "%") — чтобы фраза корректно
+  //   переводилась, если её потом пропустить через ML-переводчик.
+  let phrase, lang
+  if (displayLanguage.value === 'en') {
+    phrase = `With ${score}% probability, it's a ${name}`
+    lang = 'en-US'
+  } else {
+    phrase = `С вероятностью ${score} процентов это ${name}`
+    lang = 'ru-RU'
+  }
+
+  const utter = new SpeechSynthesisUtterance(phrase)
+  utter.lang = lang
+  utter.rate = 1.0
+  utter.onend = () => { speakingIndex.value = null }
+  utter.onerror = () => { speakingIndex.value = null }
+  speechSynthesis.speak(utter)
+  speakingIndex.value = index
+}
 
 const status = computed(() => {
   if (error.value) return 'error'
   if (loading.value) return 'loading'
   if (instance.value) return 'ready'
   return 'idle'
+})
+
+// ★ Флаг: был ли запуск inference на текущей картинке?
+//   Сбрасывается при новой картинке, ставится в true после первого runDetection.
+//   Нужен, чтобы различать "ещё не запускали" (скелетон) и "запускали, но
+//   ничего не нашли" (сообщение "Ничего не найдено").
+const hasFinishedInference = ref(false)
+
+// ★ Скелетоны: показываем пока inference не завершён.
+//   Убираем, когда есть детекции ИЛИ когда inference завершился без находок.
+const showSkeletons = computed(() => {
+  if (detections.value.length > 0) return false
+  if (hasFinishedInference.value) return false
+  // Картинка загружается/загружена, модель готова, inference ещё не завершён
+  return imageLoading.value || inferencing.value || (imageUrl.value && instance.value)
 })
 
 function colorForIndex(i) {
@@ -151,9 +302,18 @@ onMounted(async () => {
   await load()
 })
 
+// ★ Слушатель клика по canvas добавлен через @click в шаблоне (фикс 3).
+//   Раньше использовался watch(canvasEl) + addEventListener, но template ref
+//   не всегда trigger-ит watch при v-if. @click в шаблоне надёжнее — Vue
+//   сам управляет lifecycle слушателя.
+
 onBeforeUnmount(() => {
   if (imageUrl.value && imageUrl.value.startsWith('blob:')) {
     URL.revokeObjectURL(imageUrl.value)
+  }
+  // ★ Останавливаем озвучку при уходе со страницы (задача 16)
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel()
   }
   demoStore.clearCurrentModel()
 })
@@ -181,6 +341,88 @@ function onDragDrop() {
 
 function onDragEnd() {
   draggedIndex.value = null
+}
+
+// === Решение 13: управление видимостью боксов + color picker ===
+const boxVisibility = ref([])
+const customColors = ref([])
+// ★ Заменили "скрытие по клику" на "выделение по клику" (фикс 4)
+//   highlightedIndex — _origIndex выделенного бокса (одиночный, не массив)
+const highlightedIndex = ref(null)
+
+// Синхронизация: при новых детекциях все боксы видны, кастомные цвета сбрасываются
+watch(detections, (dets) => {
+  boxVisibility.value = dets.map(() => true)
+  customColors.value = new Map()
+  highlightedIndex.value = null
+})
+
+// Цвет бокса: кастомный или дефолтный по индексу
+function getColorForDetection(d, i) {
+  return customColors.value.get(d.label) || BOX_COLORS[i % BOX_COLORS.length]
+}
+
+// Перерисовка canvas при изменении видимости, цветов или выделения
+watch([boxVisibility, customColors, highlightedIndex], () => {
+  if (canvasEl.value && imageEl.value && detections.value.length > 0) {
+    nextTick(() => drawBoxes())
+  }
+}, { deep: true })
+
+function showAllBoxes() {
+  boxVisibility.value = detections.value.map(() => true)
+}
+
+function hideAllBoxes() {
+  boxVisibility.value = detections.value.map(() => false)
+}
+
+// ★ Клик по canvas: выделение бокса + озвучка (фикс 4)
+//   Первый клик по боксу — выделяем (рамка, 40% opacity) и озвучиваем
+//   Второй клик по тому же боксу — снимаем выделение, без озвучки
+//   Клик по другому боксу — переключаем выделение, озвучиваем новый
+function onCanvasClick(e) {
+  if (!canvasEl.value || detections.value.length === 0) return
+  const rect = canvasEl.value.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvasEl.value.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvasEl.value.height / rect.height)
+
+  for (let i = 0; i < detections.value.length; i++) {
+    const { xmin, ymin, xmax, ymax } = detections.value[i].box
+    if (x >= xmin && x <= xmax && y >= ymin && y <= ymax) {
+      if (highlightedIndex.value === i) {
+        // Второй клик по тому же боксу — снимаем выделение, без озвучки
+        highlightedIndex.value = null
+      } else {
+        // Клик по новому боксу — выделяем и озвучиваем
+        highlightedIndex.value = i
+        speakDetection(detections.value[i], i)
+      }
+      return
+    }
+  }
+  // Клик мимо всех боксов — снимаем выделение
+  highlightedIndex.value = null
+}
+
+// Shift+клик по чекбоксу открывает color picker
+const colorInputEl = ref(null)
+let colorPickerTarget = ref(null)
+
+function onCheckboxClick(e, label) {
+  if (e.shiftKey) {
+    e.preventDefault()
+    colorPickerTarget.value = label
+    colorInputEl.value?.click()
+  }
+}
+
+function onColorPicked(e) {
+  if (colorPickerTarget.value) {
+    customColors.value.set(colorPickerTarget.value, e.target.value)
+    // Триггерим реактивность: Map нужно пересоздать
+    customColors.value = new Map(customColors.value)
+  }
 }
 
 // --- Загрузка файлов ---
@@ -214,12 +456,14 @@ function loadImageFromBlob(file) {
   imageLoading.value = true
   imageUrl.value = newUrl
   detections.value = []
+  hasFinishedInference.value = false  // ★ сброс флага inference
 }
 
 function loadImageFromUrl(url) {
   if (imageUrl.value === url) {
     imageLoading.value = false
     detections.value = []
+    hasFinishedInference.value = false  // ★ сброс флага inference
     if (instance.value && !inferencing.value) {
       runDetection()
     }
@@ -231,6 +475,7 @@ function loadImageFromUrl(url) {
   imageLoading.value = true
   imageUrl.value = url
   detections.value = []
+  hasFinishedInference.value = false  // ★ сброс флага inference
 }
 
 function loadSample(name) {
@@ -242,6 +487,7 @@ watch(pendingSample, async (src) => {
   if (src) {
     imageLoading.value = true
     detections.value = []
+    hasFinishedInference.value = false  // ★ сброс флага inference
     pendingSample.value = null
     await nextTick()
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
@@ -272,11 +518,23 @@ watch(detections, (dets) => {
   detectedClasses.value = dets.map((d) => d.label)
 })
 
-// --- Перерисовка canvas при изменении порога или перестановке ---
-watch([threshold, detections], () => {
+// --- Перерисовка canvas при изменении порога, фильтра или перестановке ---
+watch([threshold, filterQuery, detections], () => {
   if (canvasEl.value && imageEl.value && detections.value.length > 0) {
     nextTick(() => drawBoxes())
   }
+})
+
+// ★ Сброс порога И сортировки при новой детекции (фикс 1 и 2)
+//   Порог всегда выставляем на минимальный из нового распознавания,
+//   сортировку возвращаем к значению по умолчанию.
+watch(detections, () => {
+  // ★ Всегда сбрасываем порог на min (не только если он ниже min)
+  threshold.value = minThreshold.value
+  // ★ Сброс сортировки к значению по умолчанию
+  sortMode.value = 'confidence-desc'
+  // Сброс выделения бокса (фикс 4)
+  highlightedIndex.value = null
 })
 
 // --- Детекция ---
@@ -296,6 +554,7 @@ async function runDetection() {
     pageError.value = 'Произошла ошибка при обработке. Попробуйте ещё раз.'
   } finally {
     inferencing.value = false
+    hasFinishedInference.value = true  // ★ фикс 4/6: скелетон убрать, показать "ничего не найдено" если пусто
   }
 }
 
@@ -308,14 +567,34 @@ function drawBoxes() {
   canvas.height = img.naturalHeight
   const ctx = canvas.getContext('2d')
 
-  // Рисуем только боксы, прошедшие порог
-  visibleByThreshold.value.forEach((d, i) => {
-    const color = d.color
+  // ★ Рисуем только боксы, прошедшие порог, видимые И соответствующие фильтру (фикс 5)
+  const q = filterQuery.value.trim().toLowerCase()
+  visibleByThreshold.value.forEach((d) => {
+    // Фильтр по классу (английский + русский)
+    if (q && !matchesQuery(d, q)) return
+
+    // Используем _origIndex для проверки boxVisibility (а не indexOf,
+    // который медленный и может дать неправильный результат при дубликатах)
+    const realIndex = d._origIndex
+    if (boxVisibility.value[realIndex] === false) return
+
+    // Цвет: кастомный (задача 13) или дефолтный по индексу
+    const color = getColorForDetection(d, realIndex)
     const { xmin, ymin, xmax, ymax } = d.box
     const w = xmax - xmin
     const h = ymax - ymin
 
-    ctx.lineWidth = Math.max(2, img.naturalWidth / 400)
+    // ★ Выделение (фикс 4): выделенный бокс — рамка в 2 раза толще,
+    //   остальные боксы (если есть выделенный) — 40% opacity
+    const isHighlighted = highlightedIndex.value === realIndex
+    const hasHighlight = highlightedIndex.value !== null
+    const alpha = hasHighlight ? (isHighlighted ? 1.0 : 0.4) : 1.0
+    ctx.globalAlpha = alpha
+
+    // Рамка: выделенный бокс — толще
+    ctx.lineWidth = isHighlighted
+      ? Math.max(4, img.naturalWidth / 200)
+      : Math.max(2, img.naturalWidth / 400)
     ctx.strokeStyle = color
     ctx.strokeRect(xmin, ymin, w, h)
 
@@ -331,6 +610,9 @@ function drawBoxes() {
     ctx.fillStyle = '#fff'
     ctx.textBaseline = 'middle'
     ctx.fillText(label, xmin + padX, ymin - (fontH + padY * 2) / 2)
+
+    // Сбрасываем alpha для следующей итерации
+    ctx.globalAlpha = 1.0
   })
 }
 </script>
@@ -374,9 +656,53 @@ function drawBoxes() {
       </div>
     </div>
 
-    <!-- Решение 2: метрики -->
+    <!-- ★ Степпер под блоком загрузки (фикс 3) — в основном потоке, не внутри layout -->
     <Transition name="fade">
-      <div v-if="formattedDetections.length" class="detector__metrics">
+      <div v-if="showStepper" class="detector__stepper">
+        <div class="detector__steps">
+          <div
+            v-for="(step, i) in steps"
+            :key="step.key"
+            class="detector__step"
+            :class="{
+              active: stage === step.key,
+              done: isStepDone(step.key),
+              pending: isStepPending(step.key),
+            }"
+          >
+            <span class="detector__step-num">
+              <span v-if="isStepDone(step.key)">✓</span>
+              <span v-else>{{ i + 1 }}</span>
+            </span>
+            <span class="detector__step-label">{{ step.label }}</span>
+          </div>
+        </div>
+        <Transition name="slide-up" mode="out-in">
+          <p :key="stageLabel" class="detector__stage-label">{{ stageLabel }}</p>
+        </Transition>
+      </div>
+    </Transition>
+
+    <!-- ★ Сообщение "Ничего не найдено" (фикс 6) — когда inference завершился без находок -->
+    <Transition name="fade">
+      <div
+        v-if="hasFinishedInference && detections.length === 0 && imageUrl && !imageLoading && !inferencing && instance"
+        class="detector__no-results"
+      >
+        Ничего не найдено на этом изображении. Попробуйте другое.
+      </div>
+    </Transition>
+
+    <!-- Решение 2: метрики (или скелетон во время загрузки) -->
+    <Transition name="fade" mode="out-in">
+      <!-- Скелетон -->
+      <div v-if="showSkeletons" class="detector__metrics detector__skeleton" key="skeleton">
+        <div class="detector__skeleton-block" style="width: 80px; height: 40px"></div>
+        <div class="detector__skeleton-block" style="width: 120px; height: 40px"></div>
+        <div class="detector__skeleton-block" style="width: 140px; height: 40px"></div>
+      </div>
+      <!-- Реальные метрики -->
+      <div v-else-if="formattedDetections.length" class="detector__metrics" key="metrics">
         <div class="detector__metric">
           <span class="detector__metric-label">Найдено</span>
           <Transition mode="out-in" name="num">
@@ -400,15 +726,23 @@ function drawBoxes() {
       </div>
     </Transition>
 
-    <!-- Решение 8: слайдер порога -->
-    <Transition name="fade">
-      <div v-if="formattedDetections.length" class="detector__threshold">
+    <!-- Решение 8: слайдер порога (или скелетон) -->
+    <Transition name="fade" mode="out-in">
+      <div v-if="showSkeletons" class="detector__threshold detector__skeleton" key="skeleton">
+        <div class="detector__skeleton-block" style="width: 180px; height: 20px"></div>
+        <div class="detector__skeleton-block" style="flex: 1; height: 20px"></div>
+        <div class="detector__skeleton-block" style="width: 100px; height: 20px"></div>
+      </div>
+      <div v-else-if="formattedDetections.length" class="detector__threshold" key="threshold">
         <label class="detector__threshold-label">
-          Порог уверенности: ≥ {{ threshold }}%
+          Порог уверенности: ≥ {{ threshold.toFixed(1) }}%
         </label>
         <input
           v-model.number="threshold"
-          type="range" min="0" max="100" step="5"
+          type="range"
+          :min="minThreshold"
+          max="100"
+          step="0.1"
           class="detector__threshold-slider"
         />
         <span class="detector__threshold-count">
@@ -417,11 +751,15 @@ function drawBoxes() {
       </div>
     </Transition>
 
-    <!-- Решение 12: слайдер «до/после» -->
-    <Transition name="fade">
-      <div v-if="detections.length" class="detector__compare">
+    <!-- Решение 12: слайдер-шторка (или скелетон) -->
+    <Transition name="fade" mode="out-in">
+      <div v-if="showSkeletons" class="detector__compare detector__skeleton" key="skeleton">
+        <div class="detector__skeleton-block" style="width: 200px; height: 20px"></div>
+        <div class="detector__skeleton-block" style="flex: 1; height: 20px"></div>
+      </div>
+      <div v-else-if="detections.length" class="detector__compare" key="compare">
         <label class="detector__compare-label">
-          Сравнение: {{ sliderPosition }}% показа боксов
+          Шторка сравнения: {{ sliderPosition }}% показа боксов
         </label>
         <input
           v-model.number="sliderPosition"
@@ -431,91 +769,157 @@ function drawBoxes() {
       </div>
     </Transition>
 
-    <Transition name="fade">
-      <div v-if="imageUrl" class="detector__canvas-wrap">
-        <!-- Решение 1: степпер -->
+    <!-- ★ Решение 15: двухколоночный layout — картинка слева (1fr), список справа (280px) -->
+    <div class="detector__layout">
+      <!-- ЛЕВАЯ колонка: картинка с canvas-overlay -->
+      <div class="detector__layout-left">
         <Transition name="fade">
-          <div v-if="showStepper" class="detector__stepper">
-            <div class="detector__steps">
-              <div
-                v-for="(step, i) in steps"
-                :key="step.key"
-                class="detector__step"
-                :class="{
-                  active: stage === step.key,
-                  done: isStepDone(step.key),
-                  pending: isStepPending(step.key),
-                }"
-              >
-                <span class="detector__step-num">
-                  <span v-if="isStepDone(step.key)">✓</span>
-                  <span v-else>{{ i + 1 }}</span>
-                </span>
-                <span class="detector__step-label">{{ step.label }}</span>
-              </div>
+          <div v-if="imageUrl" class="detector__canvas-wrap">
+            <div class="detector__canvas-inner">
+              <img
+                v-show="!imageLoading"
+                ref="imageEl"
+                :src="imageUrl"
+                alt="Загруженное изображение"
+                class="detector__img"
+                @load="onImageLoad"
+                @error="onImageError"
+              />
+              <!-- Canvas-overlay: шторка через clip-path. @click для скрытия бокса (задача 13) -->
+              <Transition name="fade">
+                <canvas
+                  v-if="detections.length"
+                  ref="canvasEl"
+                  class="detector__overlay"
+                  :style="{ 'clip-path': `inset(0 ${100 - sliderPosition}% 0 0)` }"
+                  @click="onCanvasClick"
+                ></canvas>
+              </Transition>
+              <!-- ★ Вертикальная черта-граница — видна всегда, двигается со слайдером -->
+              <Transition name="fade">
+                <div
+                  v-if="detections.length"
+                  class="detector__compare-line"
+                  :style="{ left: sliderPosition + '%' }"
+                ></div>
+              </Transition>
             </div>
-            <Transition name="slide-up" mode="out-in">
-              <p :key="stageLabel" class="detector__stage-label">{{ stageLabel }}</p>
-            </Transition>
           </div>
         </Transition>
-
-        <div class="detector__canvas-inner">
-          <img
-            v-show="!imageLoading"
-            ref="imageEl"
-            :src="imageUrl"
-            alt="Загруженное изображение"
-            class="detector__img"
-            @load="onImageLoad"
-            @error="onImageError"
-          />
-          <Transition name="fade">
-            <canvas
-              v-if="detections.length"
-              ref="canvasEl"
-              class="detector__overlay"
-              :style="{ 'clip-path': `inset(0 ${100 - sliderPosition}% 0 0)` }"
-            ></canvas>
-          </Transition>
-        </div>
       </div>
-    </Transition>
 
-    <section class="detector__results">
-      <h2 v-if="formattedDetections.length">Найденные объекты</h2>
-      <Transition name="fade">
-        <input
-          v-if="formattedDetections.length"
-          v-model="filterQuery"
-          type="text"
-          placeholder="Фильтр по классу…"
-          class="detector__filter"
-        />
-      </Transition>
-      <TransitionGroup name="list" tag="ul" class="detector__list">
-        <li
-          v-for="(d, index) in visibleDetections"
-          :key="d.label + '-' + index"
-          class="detector__item"
-          :class="{ dragging: draggedIndex === index }"
-          :style="{ '--color': d.color, '--i': index }"
-          draggable="true"
-          @dragstart="onDragStart(index)"
-          @dragover="onDragOver($event, index)"
-          @drop="onDragDrop"
-          @dragend="onDragEnd"
-        >
-          <span class="detector__item-drag">⋮⋮</span>
-          <span class="detector__item-dot"></span>
-          <span class="detector__item-label">{{ d.label }}</span>
-          <span class="detector__item-score">{{ d.scorePct }}%</span>
-        </li>
-      </TransitionGroup>
-      <p v-if="formattedDetections.length && !visibleDetections.length" class="detector__empty">
-        Ничего не найдено по запросу «{{ filterQuery }}»
-      </p>
-    </section>
+      <!-- ПРАВАЯ колонка: список найденных объектов -->
+      <div class="detector__layout-right">
+        <section v-if="formattedDetections.length" class="detector__results">
+          <div class="detector__results-header">
+            <h2>Найденные объекты</h2>
+            <!-- Решение 16: переключатель языка -->
+            <div class="detector__lang-toggle">
+              <button
+                :class="{ active: displayLanguage === 'en' }"
+                @click="displayLanguage = 'en'"
+              >EN</button>
+              <button
+                :class="{ active: displayLanguage === 'ru' }"
+                @click="displayLanguage = 'ru'"
+              >RU</button>
+            </div>
+          </div>
+
+          <!-- Сортировка -->
+          <div class="detector__sort">
+            <label class="detector__sort-label">Сортировка:</label>
+            <select v-model="sortMode" class="detector__sort-select">
+              <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Решение 13: кнопки «Показать все» / «Скрыть все» -->
+          <div class="detector__visibility-actions">
+            <button class="detector__btn detector__btn--ghost detector__btn--sm" @click="showAllBoxes">
+              Показать все
+            </button>
+            <button class="detector__btn detector__btn--ghost detector__btn--sm" @click="hideAllBoxes">
+              Скрыть все
+            </button>
+          </div>
+
+          <!-- Решение 5: фильтр с кнопкой [x] -->
+          <div class="detector__filter-wrap">
+            <input
+              v-model="filterQuery"
+              type="text"
+              placeholder="Фильтр по классу…"
+              class="detector__filter"
+            />
+            <Transition name="fade">
+              <button
+                v-if="filterQuery"
+                type="button"
+                class="detector__filter-clear"
+                @click="clearFilter"
+                aria-label="Очистить фильтр"
+              >×</button>
+            </Transition>
+          </div>
+
+          <!-- Скрытый color picker, открывается программно по Shift+клик -->
+          <input
+            ref="colorInputEl"
+            type="color"
+            class="detector__color-input"
+            @input="onColorPicked"
+          />
+
+          <TransitionGroup name="list" tag="ul" class="detector__list">
+            <li
+              v-for="(d, index) in visibleDetections"
+              :key="d.label + '-' + d._origIndex"
+              class="detector__item"
+              :class="{
+                dragging: draggedIndex === index,
+                hidden: boxVisibility[d._origIndex] === false,
+                highlighted: highlightedIndex === d._origIndex,
+              }"
+              :style="{ '--color': getColorForDetection(d, d._origIndex), '--i': index }"
+              draggable="true"
+              @dragstart="onDragStart(index)"
+              @dragover="onDragOver($event, index)"
+              @drop="onDragDrop"
+              @dragend="onDragEnd"
+            >
+              <input
+                type="checkbox"
+                v-model="boxVisibility[d._origIndex]"
+                class="detector__item-checkbox"
+                @click="onCheckboxClick($event, d.label)"
+                title="Shift+клик — сменить цвет"
+              />
+              <span class="detector__item-drag">⋮⋮</span>
+              <span class="detector__item-dot"></span>
+              <span class="detector__item-label">{{ getDisplayName(d) }}</span>
+              <span class="detector__item-score">{{ d.scorePct }}%</span>
+              <!-- Решение 16: кнопка озвучки -->
+              <button
+                v-if="speechSupported"
+                class="detector__item-speak"
+                :class="{ speaking: speakingIndex === index }"
+                @click.stop="speakDetection(d, index)"
+                :title="speakingIndex === index ? 'Остановить' : 'Озвучить'"
+              >
+                <span v-if="speakingIndex === index">⏸</span>
+                <span v-else>🔊</span>
+              </button>
+            </li>
+          </TransitionGroup>
+          <p v-if="!visibleDetections.length" class="detector__empty">
+            Ничего не найдено по запросу «{{ filterQuery }}»
+          </p>
+        </section>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -578,21 +982,24 @@ function drawBoxes() {
 .detector__canvas-wrap { margin-bottom: 24px; }
 .detector__canvas-inner { position: relative; display: inline-block; max-width: 100%; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); }
 .detector__img { display: block; max-height: 512px; width: auto; max-width: 100%; height: auto; object-fit: contain; }
-.detector__overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.detector__overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
 
 /* Решение 5: фильтр */
-.detector__filter { width: 100%; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 13px; background: var(--color-surface); margin-bottom: 12px; transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+.detector__filter-wrap { position: relative; margin-bottom: 12px; }
+.detector__filter { width: 100%; padding: 8px 32px 8px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 13px; background: var(--color-surface); transition: border-color 0.2s ease, box-shadow 0.2s ease; }
 .detector__filter:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
+.detector__filter-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border: none; background: var(--color-surface-alt); border-radius: 50%; color: var(--color-text-muted); font-size: 16px; line-height: 1; cursor: pointer; display: grid; place-items: center; transition: background-color 0.2s ease, color 0.2s ease; }
+.detector__filter-clear:hover { background: var(--color-danger); color: #fff; }
 .detector__empty { font-size: 14px; color: var(--color-text-muted); font-style: italic; padding: 12px 0; }
 
 .detector__results h2 { font-size: 18px; margin-bottom: 14px; }
-.detector__list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; list-style: none; }
-.detector__item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: grab; }
+.detector__list { display: grid; grid-template-columns: 1fr; gap: 6px; list-style: none; }
+.detector__item { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: grab; }
 .detector__item.dragging { opacity: 0.5; cursor: grabbing; }
-.detector__item-drag { color: var(--color-text-muted); font-size: 14px; letter-spacing: -2px; }
-.detector__item-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--color); flex-shrink: 0; }
-.detector__item-label { flex: 1; font-weight: 500; font-size: 14px; text-transform: capitalize; }
-.detector__item-score { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--color-text-muted); font-weight: 600; }
+.detector__item-drag { color: var(--color-text-muted); font-size: 12px; letter-spacing: -2px; }
+.detector__item-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color); flex-shrink: 0; }
+.detector__item-label { flex: 1; font-weight: 500; font-size: 12px; text-transform: capitalize; }
+.detector__item-score { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--color-text-muted); font-weight: 600; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
@@ -601,4 +1008,79 @@ function drawBoxes() {
 .list-leave-active { transition: opacity 0.3s ease, transform 0.3s ease; position: absolute; }
 .list-leave-to { opacity: 0; transform: translateX(24px); }
 .list-move { transition: transform 0.4s ease; }
+
+/* ★ Решение 15: двухколоночный layout — картинка слева (1fr), список справа (280px) */
+.detector__layout { display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .detector__layout { grid-template-columns: 1fr; } }
+.detector__layout-left { min-width: 0; }
+.detector__layout-right { min-width: 0; }
+
+/* ★ Решение 12: вертикальная черта-граница */
+.detector__compare-line { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--color-primary); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4); transform: translateX(-50%); pointer-events: none; z-index: 2; transition: left 0.1s ease; }
+
+/* ★ Решение 13: кнопки «Показать все» / «Скрыть все» + чекбоксы + color picker */
+.detector__visibility-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.detector__btn--sm { padding: 6px 12px; font-size: 12px; }
+.detector__color-input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.detector__item-checkbox { margin: 0; accent-color: var(--color-primary); cursor: pointer; width: 14px; height: 14px; flex-shrink: 0; }
+.detector__item.hidden { opacity: 0.4; text-decoration: line-through; }
+.detector__item.hidden .detector__item-dot { opacity: 0.5; }
+
+/* ★ Выделение pill'а при клике на бокс (фикс 4) — рамка цветом класса */
+.detector__item.highlighted {
+  border: 2px solid var(--color);
+  box-shadow: 0 0 0 2px var(--color), var(--shadow-sm);
+  padding: 4px 8px;  /* компенсируем +2px border, чтобы не дёргался layout */
+}
+
+/* ★ Скелетоны (фикс 2) */
+.detector__skeleton { gap: 12px; }
+.detector__skeleton-block {
+  background: linear-gradient(90deg, var(--color-surface-alt) 25%, var(--color-border) 50%, var(--color-surface-alt) 75%);
+  background-size: 200% 100%;
+  border-radius: var(--radius-sm);
+  animation: skeleton-shimmer 1.5s infinite;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ★ Сортировка (фикс 1) */
+.detector__sort { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.detector__sort-label { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
+.detector__sort-select {
+  flex: 1; padding: 4px 8px; border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); font-size: 12px; background: var(--color-surface);
+  cursor: pointer; color: var(--color-text);
+}
+.detector__sort-select:focus { outline: none; border-color: var(--color-primary); }
+
+/* ★ Сообщение "Ничего не найдено" (фикс 6) */
+.detector__no-results {
+  padding: 16px 20px; margin-bottom: 12px;
+  background: var(--color-surface-alt); border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  color: var(--color-text); font-size: 14px; font-style: italic;
+}
+
+/* ★ Решение 16: переключатель языка + озвучка */
+.detector__results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.detector__results-header h2 { margin: 0; }
+.detector__lang-toggle { display: flex; gap: 2px; background: var(--color-surface-alt); border-radius: var(--radius-sm); padding: 2px; }
+.detector__lang-toggle button {
+  padding: 4px 10px; border: none; background: transparent; border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; color: var(--color-text-muted); cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.detector__lang-toggle button.active { background: var(--color-primary); color: #fff; }
+
+.detector__item-speak {
+  width: 22px; height: 22px; border: none; background: transparent; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 12px; display: grid; place-items: center; flex-shrink: 0;
+  transition: background-color 0.2s ease; color: var(--color-text-muted);
+}
+.detector__item-speak:hover { background: var(--color-primary-soft); color: var(--color-primary-dark); }
+.detector__item-speak.speaking { background: var(--color-primary-soft); color: var(--color-primary); }
 </style>
